@@ -1,0 +1,29 @@
+# Explicit dense size cap; skipped Sinkhorn rows remain in the output.
+name: scaling
+scenario: support
+geometry: grid
+sizes: [1024, 4096, 16384, 65536]
+dimensions: [2, 3]
+overlap_values: [1.0, 0.5, 0.0]
+weight_modes: [nonuniform]
+seeds: [0, 1, 2]
+projection_kinds: [random, structured]
+projection_counts: [64]
+projection_seed: 20260909
+fiber_tol: 1.0e-12
+mass_tol: 1.0e-12
+feasibility_tol: 1.0e-8
+repeats: 7
+warmups: 2
+threads: 1
+measure_memory: true
+save_inputs: false
+exact_max_entries: 65536
+sinkhorn:
+  backend: pot
+  epsilons: [0.001]
+  max_iter: 5000
+  tolerance: 1.0e-8
+  check_every: 10
+  max_entries: 1048576
+  max_seconds: null

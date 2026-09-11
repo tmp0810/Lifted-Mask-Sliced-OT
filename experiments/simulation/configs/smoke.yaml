@@ -1,0 +1,29 @@
+# Small functional check, not a paper-scale runtime claim.
+name: smoke
+scenario: support
+geometry: grid
+sizes: [16, 64]
+dimensions: [2]
+overlap_values: [1.0, 0.5, 0.0]
+weight_modes: [nonuniform]
+seeds: [0]
+projection_kinds: [random, structured]
+projection_counts: [8]
+projection_seed: 20260909
+fiber_tol: 1.0e-12
+mass_tol: 1.0e-12
+feasibility_tol: 1.0e-8
+repeats: 2
+warmups: 1
+threads: 1
+measure_memory: true
+save_inputs: true
+exact_max_entries: 4096
+sinkhorn:
+  backend: pot
+  epsilons: [0.01, 0.001]
+  max_iter: 1500
+  tolerance: 1.0e-8
+  check_every: 10
+  max_entries: 4096
+  max_seconds: null

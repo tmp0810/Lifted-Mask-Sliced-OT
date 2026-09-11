@@ -1,0 +1,28 @@
+name: pilot
+scenario: support
+geometry: grid
+sizes: [256, 1024, 4096]
+dimensions: [2, 3]
+overlap_values: [1.0, 0.75, 0.5, 0.25, 0.0]
+weight_modes: [uniform, nonuniform]
+seeds: [0, 1, 2]
+projection_kinds: [random, structured]
+projection_counts: [16, 64]
+projection_seed: 20260909
+fiber_tol: 1.0e-12
+mass_tol: 1.0e-12
+feasibility_tol: 1.0e-8
+repeats: 7
+warmups: 2
+threads: 1
+measure_memory: false
+save_inputs: true
+exact_max_entries: 65536
+sinkhorn:
+  backend: pot
+  epsilons: [0.01, 0.001, 0.0001]
+  max_iter: 5000
+  tolerance: 1.0e-8
+  check_every: 10
+  max_entries: 1048576
+  max_seconds: null

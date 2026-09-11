@@ -1,0 +1,28 @@
+name: common_support
+scenario: weights
+geometry: grid
+sizes: [64, 256]
+dimensions: [2]
+weight_change_values: [0.0, 0.25, 0.5, 0.75, 1.0]
+weight_modes: [nonuniform]
+seeds: [0, 1, 2]
+projection_kinds: [random, structured]
+projection_counts: [16]
+projection_seed: 20260909
+fiber_tol: 1.0e-12
+mass_tol: 1.0e-12
+feasibility_tol: 1.0e-8
+repeats: 5
+warmups: 2
+threads: 1
+measure_memory: false
+save_inputs: true
+exact_max_entries: 65536
+sinkhorn:
+  backend: pot
+  epsilons: [0.01, 0.001]
+  max_iter: 3000
+  tolerance: 1.0e-8
+  check_every: 10
+  max_entries: 65536
+  max_seconds: null

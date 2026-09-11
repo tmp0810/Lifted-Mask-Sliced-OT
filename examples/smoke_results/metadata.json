@@ -1,0 +1,61 @@
+{
+  "utc": "2026-09-11T04:38:39.655192+00:00",
+  "python": "3.12.14",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.39",
+  "processor": "x86_64",
+  "cpu_count": 9,
+  "packages": {
+    "numpy": "2.3.5",
+    "scipy": "1.17.0",
+    "matplotlib": "3.10.8",
+    "PyYAML": "6.0.3",
+    "threadpoolctl": "3.6.0",
+    "POT": "0.9.7.post1"
+  },
+  "threadpools": [
+    {
+      "user_api": "blas",
+      "internal_api": "openblas",
+      "num_threads": 1,
+      "prefix": "libscipy_openblas",
+      "filepath": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/numpy.libs/libscipy_openblas64_-fdde5778.so",
+      "version": "0.3.30",
+      "threading_layer": "pthreads",
+      "architecture": "SkylakeX"
+    },
+    {
+      "user_api": "blas",
+      "internal_api": "openblas",
+      "num_threads": 1,
+      "prefix": "libscipy_openblas",
+      "filepath": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/scipy.libs/libscipy_openblas-6cdc3b4a.so",
+      "version": "0.3.30",
+      "threading_layer": "pthreads",
+      "architecture": "SkylakeX"
+    },
+    {
+      "user_api": "openmp",
+      "internal_api": "openmp",
+      "num_threads": 1,
+      "prefix": "libgomp",
+      "filepath": "/workspace/scratch/12f1562bf3b5/lmot-paper/.venv/lib/python3.12/site-packages/pot.libs/libgomp-870cb1d0.so.1.0.0",
+      "version": null
+    },
+    {
+      "user_api": "openmp",
+      "internal_api": "openmp",
+      "num_threads": 1,
+      "prefix": "libgomp",
+      "filepath": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/site-packages/scikit_learn.libs/libgomp-e985bcbb.so.1.0.0",
+      "version": null
+    }
+  ],
+  "git_commit": null,
+  "git_status": null,
+  "source_sha256": "aafe5cfcd129b615f56e767ab928e2323280cf924985c2a8d671141729e095e7",
+  "dtype": "float64",
+  "device": "CPU",
+  "output": "cost + barycentric map",
+  "memory_metric": "untimed tracemalloc peak, not total RSS",
+  "cost": "squared Euclidean, excluding entropy; bounding-box cost <= 1"
+}

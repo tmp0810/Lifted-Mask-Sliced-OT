@@ -162,6 +162,7 @@ class SlicedPlan:
             safe = position.clamp_max(len(keys) - 1)
             valid = (position < len(keys)) & (keys[safe] == query)
             i, j, block = i[valid], j[valid], position[valid]
+            # xây phần mass chung bằng mask
             h = torch.minimum(source.u[i], target.u[j])
             eta = 1 - group_sum(h, block, len(mass))
             if bool((eta < -1e-11).any()):

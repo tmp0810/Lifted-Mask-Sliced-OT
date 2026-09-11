@@ -2,12 +2,12 @@ name: pilot
 scenario: support
 geometry: grid
 sizes: [256, 1024, 4096]
-dimensions: [2, 3]
+dimensions: [2]
 overlap_values: [1.0, 0.75, 0.5, 0.25, 0.0]
-weight_modes: [uniform, nonuniform]
+weight_modes: [nonuniform]
 seeds: [0, 1, 2]
-projection_kinds: [random, structured]
-projection_counts: [16, 64]
+projection_kinds: [structured]
+projection_counts: [3, 5, 20, 50]
 projection_seed: 20260909
 fiber_tol: 1.0e-12
 mass_tol: 1.0e-12
@@ -20,7 +20,7 @@ save_inputs: true
 exact_max_entries: 65536
 sinkhorn:
   backend: pot
-  epsilons: [0.01, 0.001, 0.0001]
+  epsilons: [0.001]
   max_iter: 5000
   tolerance: 1.0e-8
   check_every: 10

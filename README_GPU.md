@@ -39,13 +39,13 @@ or accelerator-specific download URL is forced.
 ## Main output: full GPU plan, runtime, RMSE and identity
 
 ```python
-!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/smoke.yaml --device cuda --reference-epsilon 0.001
+!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/smoke.yaml --device cuda
 ```
 
 After the correctness check and smoke run, the existing larger config also works:
 
 ```python
-!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda --reference-epsilon 0.001
+!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda --max-entries 16777216
 ```
 
 Use the same projection bank for LMOT and EST, including identical prefixes for
@@ -62,9 +62,10 @@ Outputs go to `results/simulation/paper_gpu_<config-name>_<timestamp>/`:
 - `raw_timings.csv`: each measured repetition, including unsuccessful calls.
 - `metadata.json`, `config.yaml`, projection banks and optional input arrays.
 
-All predictions, Sinkhorn reference matrices and RMSE calculations stay on the
-selected device. Only scalar diagnostics and final summary values are copied
-to the CPU for serialization. Data generation and CSV writing remain host tasks.
+All predictions and RMSE calculations use the selected device. The independent
+OT linear-programming reference is solved on CPU by POT and copied to the
+prediction device before evaluation. Reference construction, solving and transfer
+are outside every method's timer. Data generation and CSV writing remain host tasks.
 
 ### What is timed
 
@@ -102,18 +103,40 @@ not total GPU reserved memory, total device utilization or process RSS.
 ### Reference and failure handling
 
 Plan error is exactly `sqrt(mean((P - P_gt)**2))` on the probability coupling,
-with no row normalization. `P_gt` is an independently converged Sinkhorn plan
-at `--reference-epsilon` (default 0.001), checked against both marginals. It is an
-entropic reference, not an exact unregularized OT plan or an identity coupling.
-The reference default budget is 50,000 iterations with marginal L1 tolerance
-1e-9. Baseline budgets and epsilons still come from the YAML config. GPU support
-does not remove the need to check convergence or select iteration budgets.
+with no row normalization. `P_gt` now solves the **unregularized OT linear
+program** with the same squared-Euclidean cost and marginals:
 
-An unconverged reference is never used to score RMSE. Nonconverged predictions
-are retained in detailed files and counted as failures in the main aggregate.
-Empty aggregate metric/runtime cells are not zeros; raw elapsed time remains
-available. Identity metrics for valid lifted plans can still be reported when
-the separate Sinkhorn reference failed.
+```text
+minimize sum_ij P_ij C_ij
+subject to P >= 0, P 1 = alpha, P^T 1 = beta.
+```
+
+`experiments/simulation/ot_reference.py` calls `ot.emd(..., log=True)`, POT's
+C++ network-simplex solver on CPU. One reference is computed per dataset pair
+and shared by LMOT, EST and every Sinkhorn epsilon/projection budget. There is
+no entropy term, no reference epsilon and no self-identity shortcut. Sinkhorn
+remains a benchmarked GPU method with its epsilon and budget from the YAML.
+
+The LP budget is `--reference-max-iter` (default 1,000,000). A reference is
+accepted only when POT reports optimal status, both marginal L1 errors are at
+most `--reference-tolerance` (default 1e-9), and dual feasibility and the
+primal/dual gap pass the corresponding scale-adjusted tolerance. This option
+validates the LP result; it is not a Sinkhorn stopping threshold. Failed
+references never generate purported ground-truth RMSE values. Valid identity
+metrics remain available independently. There is no automatic Sinkhorn fallback.
+
+Outputs label the reference with `reference_method=ot_lp`,
+`reference_backend=pot.emd` and `reference_device=cpu`, replacing
+`reference_epsilon`. Detailed rows record reference status, POT result code,
+warning, cost, marginal errors, dual certificate and untimed reference runtime.
+`device` continues to describe the prediction device. A transport LP can have
+multiple optimal plans: RMSE measures agreement with the minimizer returned by
+POT, not distance to the entire set of optimal couplings.
+
+The previous `--reference-epsilon` flag and Python argument have been removed;
+delete them from old commands. Nonconverged predictions remain in detailed
+files and count as failures in the main aggregate. Empty aggregate cells are
+not zeros; raw elapsed times remain available.
 
 The dense-entry limit is the smaller of `--max-entries` and the config's
 `sinkhorn.max_entries`. Default CLI cap: 1,048,576 entries. Thus the existing
@@ -190,25 +213,13 @@ parallel reductions may differ from NumPy in the last floating-point bits.
 
 ## Validation
 
-Cleanup validation used PyTorch 2.6.0+cpu:
-
-- 12 of the 13 tests passed (9 backend tests and 3 simulation tests).
-  The POT/Sinkhorn test was blocked by a bus error when importing the installed
-  POT native extension `ot.bsp.bsp_wrap`; it remains enabled for Colab validation.
-- The backend tests include 12 data settings x 4 directions x 2 lifted
-  methods against an independent NumPy dense oracle; block mass, full plan,
-  apply, cost, barycentric map and marginals were checked.
-- Exact overlap tests include tied leading coordinates, signed zero and distinct
-  atoms separated by 1e-14. Other cases cover permuted identity, full collapse,
-  unequal support sizes, no overlap, singleton fibers, anchored near-tie chains,
-  small residual mass and coordinates offset by 1e8. Public API routing to
-  the CUDA-default backend is checked explicitly.
-- The suite includes an analytic two-atom entropic check for POT and `torch_log`.
-  The runner checks that passed use `torch_log` and cover synchronization ordering, CSV output,
-  reference failure handling and implicit operation above the dense cap.
-- The original smoke config completed through the torch runner in explicit CPU
-  mode: 36 pair/method rows and six converged references at epsilon=0.01.
-  LMOT's largest identity-plan entry error was about 6.25e-17.
+The suite checks LMOT/EST against an independent dense lifting oracle, validates
+Sinkhorn against an analytic entropic plan, and tests the new LP reference on
+permuted self-transport, unequal supports and a partial-overlap example whose
+OT optimum moves common mass. Feasible but unfinished/nonoptimal LP results
+must be rejected. Runner checks cover the three methods, one reference per
+pair, LP identity RMSE, dense/implicit output, timing boundaries and reference
+failure. See [VALIDATION.md](VALIDATION.md) for the latest execution results.
 
 **No CUDA hardware was available in the development workspace. Actual CUDA
 execution and GPU speedups have not been measured here.** The Colab command
@@ -219,3 +230,5 @@ float64 kernel-launch overhead need not be faster on a GPU.
 Implementation references: [PyTorch CUDA synchronization](https://docs.pytorch.org/docs/stable/generated/torch.cuda.synchronize.html),
 [stable argsort](https://docs.pytorch.org/docs/stable/generated/torch.argsort.html),
 [POT log-domain Sinkhorn](https://pythonot.github.io/gen_modules/ot.bregman.html#ot.bregman.sinkhorn_log).
+
+Reference solver: [POT ot.emd](https://pythonot.github.io/all.html#ot.emd).

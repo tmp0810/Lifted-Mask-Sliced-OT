@@ -2,8 +2,9 @@
 
 Use paper_results_gpu for the usual dense runtime + plan RMSE table. This
 module defaults to implicit outputs for scaling. CUDA is required unless
---device cpu is explicitly selected for parity/debugging. All transports,
-reference plans, masks, sorting and RMSE use float64 torch tensors.
+--device cpu is explicitly selected for parity/debugging. Predictions, masks,
+sorting and RMSE use float64 torch tensors. The unregularized OT reference is
+solved by POT's CPU linear-programming solver, outside prediction timing.
 
 Inputs and directions are generated as before, then uploaded before timing.
 Each timed call synchronizes CUDA before t0 AND before stopping the wall clock.
@@ -29,15 +30,17 @@ from threadpoolctl import threadpool_limits
 from lmot.gpu import solve_lmot, solve_est, solve_sinkhorn, resolve_device, synchronize
 from lmot.gpu.common import tensor
 from lmot.gpu.metrics import (plan_rmse, overlap_statistics, collision_statistics,
-                             identity_reference, inspect_plan, evaluate_result)
+                             identity_reference, evaluate_result)
 from lmot.gpu.plans import DensePlan
 from lmot.projections import make_projections
 from .data import make_pair
+from .ot_reference import solve_ot_reference
 from .utils import ROOT, metadata, save_table, validate_config
 
 
 GROUP_COLUMNS = ("scenario", "geometry", "n", "m", "d", "weights", "sweep_value",
-                 "projection_kind", "L", "method", "epsilon", "reference_epsilon",
+                 "projection_kind", "L", "method", "epsilon",
+                 "reference_method", "reference_backend", "reference_device",
                  "device", "dtype", "output_mode", "backend")
 
 
@@ -113,7 +116,7 @@ def timed_prediction(solver, *, device, output_mode, max_entries, batch_size, me
 
 @torch.no_grad()
 def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
-        reference_epsilon=1e-3, reference_tolerance=1e-9, reference_max_iter=50_000,
+        reference_tolerance=1e-9, reference_max_iter=1_000_000,
         max_entries=1_048_576, batch_size=128, repeats=None, warmups=None,
         sinkhorn_backend=None):
     device = resolve_device(device)  # Fail before producing mislabeled CPU results.
@@ -129,12 +132,13 @@ def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
     if cfg["sinkhorn"]["backend"] not in ("pot", "torch_log"):
         raise ValueError("GPU supports pot or torch_log; pass --sinkhorn-backend pot")
     values = validate_config(cfg)
-    if (not np.isfinite([reference_epsilon, reference_tolerance]).all()
-            or min(reference_epsilon, reference_tolerance) <= 0
+    if (not np.isfinite(reference_tolerance) or reference_tolerance <= 0
             or min(reference_max_iter, max_entries, batch_size) < 1):
         raise ValueError("invalid reference/allocation settings")
     if not cfg["sinkhorn"]["epsilons"]:
         raise ValueError("at least one Sinkhorn epsilon is required")
+    if output_mode == "dense":
+        import ot  # LP reference always requires POT, regardless of baseline backend.
     cap = min(max_entries, cfg["sinkhorn"].get("max_entries") or max_entries)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     prefix = "paper_gpu" if output_mode == "dense" else "implicit_gpu"
@@ -143,8 +147,11 @@ def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
     (out / "projections").mkdir()
     if cfg["save_inputs"]:
         (out / "inputs").mkdir()
-    settings = dict(device=str(device), dtype="float64", output_mode=output_mode,
-                    reference_epsilon=reference_epsilon, reference_tolerance=reference_tolerance,
+    reference_tags = dict(reference_method="ot_lp" if output_mode == "dense" else None,
+                          reference_backend="pot.emd" if output_mode == "dense" else None,
+                          reference_device="cpu" if output_mode == "dense" else None)
+    settings = dict(device=str(device), dtype="float64", output_mode=output_mode, **reference_tags,
+                    reference_tolerance=reference_tolerance,
                     reference_max_iter=reference_max_iter, max_entries=cap, batch_size=batch_size)
     (out / "config.yaml").write_text(yaml.safe_dump({**cfg, "gpu_evaluation": settings}, sort_keys=False))
     rows, raw, projection_cache = [], [], {}
@@ -159,7 +166,9 @@ def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
                         gpu_total_memory_bytes=torch.cuda.get_device_properties(device).total_memory if device.type == "cuda" else None,
                         output="cost + barycentric map + " + ("full GPU matrix" if output_mode == "dense" else "implicit plan"),
                         memory_metric="peak extra torch CUDA allocated MiB inside prediction; not reserved memory or RSS",
-                        reference="converged entropic Sinkhorn; unused in implicit mode",
+                        reference="unregularized OT linear program via POT ot.emd; unused in implicit mode",
+                        reference_validation="POT optimal status, marginals, dual feasibility and primal/dual gap",
+                        reference_nonuniqueness="RMSE compares to the minimizer returned by POT; LP minimizers may not be unique",
                         timing="wall clock synchronized before/after; H2D, D2H, reference, metrics excluded",
                         aggregation="per-pair median runtime; mean/sample SD across seeds; single-seed SD blank",
                         rmse="sqrt(mean((P - P_gt)**2)) on the device; no row normalization")
@@ -177,7 +186,7 @@ def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
                 i, j, overlap = overlap_statistics(*args)
                 tags = dict(case=case, scenario=cfg["scenario"], geometry=cfg["geometry"], n=n,
                             m=len(y), d=d, weights=weights, seed=seed, sweep_value=value, is_self=is_self,
-                            reference_epsilon=reference_epsilon if output_mode == "dense" else None,
+                            **reference_tags,
                             device=str(device), dtype="float64", output_mode=output_mode, **overlap)
                 too_large = n * len(y) > cap
                 functions, specs = {}, {}
@@ -220,16 +229,14 @@ def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
                 reference_ok = False
                 tags["reference_status"] = "not_computed_implicit"
                 if output_mode == "dense":
-                    gt_result = solve_sinkhorn(*args, device=device, epsilon=reference_epsilon,
-                        tolerance=reference_tolerance, max_iter=reference_max_iter, max_entries=cap,
-                        backend=sink["backend"], check_every=sink.get("check_every", 10), max_seconds=None)
-                    gt = gt_result.plan.matrix
-                    gt_check = inspect_plan(gt, alpha, beta, gt_result.diagnostics, reference_tolerance)
-                    reference_ok = gt_check["plan_status"] == "ok"
-                    tags.update(reference_status=gt_check["plan_status"],
-                                reference_iterations=gt_check["iterations"],
-                                reference_row_l1=gt_check["row_l1"], reference_col_l1=gt_check["col_l1"])
-                    del gt_result
+                    synchronize(device)
+                    reference_started = time.perf_counter()
+                    gt, reference_info = solve_ot_reference(*args, max_iter=reference_max_iter,
+                        tolerance=reference_tolerance, max_entries=cap, num_threads=cfg["threads"])
+                    synchronize(device)
+                    tags.update(reference_info,
+                                reference_runtime_ms=1e3 * (time.perf_counter() - reference_started))
+                    reference_ok = tags["reference_status"] == "ok"
                     if is_self:
                         identity = identity_reference(*args, i, j)
                 for _ in range(cfg["warmups"]):
@@ -293,9 +300,10 @@ def main(argv=None, *, default_mode="implicit"):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output-mode", choices=("dense", "implicit"), default=default_mode)
-    parser.add_argument("--reference-epsilon", type=float, default=1e-3)
-    parser.add_argument("--reference-tolerance", type=float, default=1e-9)
-    parser.add_argument("--reference-max-iter", type=int, default=50_000)
+    parser.add_argument("--reference-tolerance", type=float, default=1e-9,
+                        help="validation tolerance for the OT LP reference (marginals and dual certificate)")
+    parser.add_argument("--reference-max-iter", type=int, default=1_000_000,
+                        help="maximum POT network-simplex iterations for the reference")
     parser.add_argument("--sinkhorn-backend", choices=("pot", "torch_log"))
     parser.add_argument("--max-entries", type=int, default=1_048_576)
     parser.add_argument("--batch-size", type=int, default=128)

@@ -3,7 +3,8 @@
     LMOT_REQUIRE_CUDA=1 python -m unittest tests.test_gpu -v
 
 The environment flag makes missing CUDA a failure rather than a silent skip.
-NumPy reference calculations are used only in this test module, never by GPU solvers.
+The NumPy lifting oracle is test-only. The experiment's OT LP reference is a
+separate CPU calculation, never part of the timed GPU prediction.
 """
 import csv
 import os
@@ -186,14 +187,17 @@ class TestTorchBackend(unittest.TestCase):
                 resolve_device("cuda")
 
     def test_runner_outputs_and_timing_synchronization(self):
-        from experiments.simulation.run_gpu import run, timed_prediction, GROUP_COLUMNS, aggregate
+        from experiments.simulation.run_gpu import run, timed_prediction, aggregate
+        from experiments.simulation.ot_reference import solve_ot_reference
         events = []
         with patch("experiments.simulation.run_gpu.synchronize", side_effect=lambda d: events.append("sync")), \
              patch("experiments.simulation.run_gpu.prediction", side_effect=lambda *a: (events.append("predict"), None)):
             timed_prediction(None, device=torch.device("cpu"), output_mode="dense", max_entries=4, batch_size=2)
         self.assertEqual(events, ["sync", "predict", "sync"])
-        base = dict(zip(GROUP_COLUMNS, ["support", "grid", 4, 4, 2, "uniform", .5,
-                                        "random", 1, "LMOT", None, .01, "cpu", "float64", "dense", "torch"]))
+        base = dict(scenario="support", geometry="grid", n=4, m=4, d=2, weights="uniform",
+                    sweep_value=.5, projection_kind="random", L=1, method="LMOT", epsilon=None,
+                    reference_method="ot_lp", reference_backend="pot.emd", reference_device="cpu",
+                    device="cpu", dtype="float64", output_mode="dense", backend="torch")
         records = [dict(base, is_self=False, rmse_status="ok", runtime_ms=t, plan_rmse=e)
                    for t, e in [(2., .01), (4., .03)]]
         table = aggregate(records)[0]
@@ -208,27 +212,44 @@ class TestTorchBackend(unittest.TestCase):
                 folder = Path(folder)
                 cfg = folder/'check.yaml'
                 cfg.write_text(yaml.safe_dump(config))
-                out = run(cfg, folder/'dense', device=device, output_mode='dense', reference_epsilon=.1)
+                with patch("experiments.simulation.run_gpu.solve_ot_reference",
+                           wraps=solve_ot_reference) as reference_solver:
+                    out = run(cfg, folder/'dense', device=device, output_mode='dense')
+                # Three datasets: one LP per pair, shared by every method/L/repetition.
+                self.assertEqual(reference_solver.call_count, 3)
                 rows = list(csv.DictReader((out/'per_pair.csv').read_text().splitlines()))
                 self.assertEqual(len(rows), 15)
                 self.assertTrue(all(r['reference_status']=='ok' for r in rows))
                 self.assertTrue(all(r['rmse_status']=='ok' for r in rows))
                 self.assertTrue(all(r['device'].startswith(device) for r in rows))
+                self.assertTrue(all(r['reference_method']=='ot_lp' for r in rows))
+                self.assertTrue(all(r['reference_backend']=='pot.emd' for r in rows))
+                self.assertTrue(all(r['reference_device']=='cpu' for r in rows))
+                self.assertEqual({r['method'] for r in rows}, {'LMOT', 'EST', 'Sinkhorn'})
+                self.assertNotIn('reference_epsilon', rows[0])
                 for row in rows:
                     if row['method']=='LMOT' and row['is_self']=='True':
                         self.assertLess(float(row['identity_rmse']), 1e-13)
+                        self.assertLess(float(row['plan_rmse']), 1e-13)
+                    if row['method']=='Sinkhorn' and row['is_self']=='True':
+                        self.assertGreater(float(row['plan_rmse']), 1e-4)
                 # Implicit mode keeps lifted methods above the dense cap.
-                out = run(cfg, folder/'implicit', device=device, output_mode='implicit', max_entries=1)
+                with patch("experiments.simulation.run_gpu.solve_ot_reference",
+                           side_effect=AssertionError("implicit benchmark solved an LP")):
+                    out = run(cfg, folder/'implicit', device=device, output_mode='implicit', max_entries=1)
                 rows = list(csv.DictReader((out/'per_pair.csv').read_text().splitlines()))
                 self.assertTrue(all(r['plan_status']=='skipped_size' for r in rows if r['method']=='Sinkhorn'))
                 self.assertTrue(all(r['plan_status']=='ok' for r in rows if r['method']!='Sinkhorn'))
                 # A failed reference must not yield a purported ground-truth RMSE.
-                out = run(cfg, folder/'failed_ref', device=device, output_mode='dense',
-                          reference_epsilon=.01, reference_max_iter=1)
+                with patch("experiments.simulation.run_gpu.solve_ot_reference",
+                           return_value=(None, {"reference_status": "not_optimal"})):
+                    out = run(cfg, folder/'failed_ref', device=device, output_mode='dense')
                 rows = list(csv.DictReader((out/'per_pair.csv').read_text().splitlines()))
                 failed = [r for r in rows if r['reference_status']!='ok']
                 self.assertTrue(failed)
                 self.assertTrue(all(not r['plan_rmse'] for r in failed))
+                self.assertTrue(all(r['rmse_status']=='reference_failed' for r in failed))
+                self.assertTrue(all(r['identity_rmse'] for r in failed if r['is_self']=='True'))
 
     def test_public_api_selects_gpu_backend(self):
         import lmot

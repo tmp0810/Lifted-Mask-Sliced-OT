@@ -1,4 +1,7 @@
-"""Full GPU-plan runtime + RMSE + separate identity table; existing YAML configs.
+"""GPU-plan runtime + RMSE against OT linear programming + identity table.
+
+LMOT, EST and Sinkhorn are predictions. POT ot.emd supplies a CPU reference
+outside the prediction timer; existing data/projection YAML settings still apply.
 
     python -m experiments.simulation.paper_results_gpu \
         --config experiments/simulation/configs/smoke.yaml --device cuda

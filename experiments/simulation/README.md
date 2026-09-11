@@ -9,10 +9,10 @@ Run from the repository root after `pip install -e .`.
 | `configs/weights.yaml` | Common support with changing weights |
 | `configs/scaling.yaml` | Larger n; implicit lifting and explicit dense Sinkhorn limits |
 
-Dense-plan runtime, RMSE against converged Sinkhorn, and separate identity checks:
+Dense-plan runtime, RMSE against an OT linear-programming reference, and separate identity checks:
 
 ```bash
-python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda
+python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda --max-entries 16777216
 ```
 
 Implicit cost/map runtime for larger problems:
@@ -37,17 +37,34 @@ kind. Compare only rows with compatible dataset, output, hardware and status.
 
 The effective dense cap is the smaller of `--max-entries` and the YAML's
 `sinkhorn.max_entries`. Both must permit n*m entries to run a dense case.
-`--reference-epsilon` sets the RMSE reference (default 0.001); the YAML's
-`sinkhorn.epsilons` selects baseline epsilons independently. Legacy
-`exact_max_entries` config fields are accepted but unused: there is no CPU LP
-reference solve in the GPU runner.
+The reference is always unregularized OT solved by POT's `ot.emd` on CPU,
+then transferred to the prediction device outside timing. LMOT, EST and
+Sinkhorn remain the three benchmarked methods. The YAML's `sinkhorn.epsilons`
+selects baseline epsilons; the reference has no epsilon. Remove the obsolete
+`--reference-epsilon` option from older commands.
+
+`--reference-max-iter` (default 1,000,000) sets the network-simplex iteration
+budget. `--reference-tolerance` (default 1e-9) checks marginals and LP optimality.
+Failed references produce blank RMSE and an explicit status, never a fallback
+reference. Detailed output includes the LP cost and validation diagnostics;
+main tables identify `reference_method=ot_lp` and `reference_backend=pot.emd`.
+
+Legacy `exact_max_entries` config fields remain accepted but unused; the two
+current dense caps above govern the LP reference as well as dense predictions.
+For n=4096, both must allow at least 16,777,216 entries. LP reference storage and
+computation require CPU resources even when predictions run on CUDA.
+
+An LP may have multiple optimal couplings; plan RMSE compares with the
+particular minimizer returned by POT. Identity checks still use the exact
+coordinate-aligned self-coupling.
 
 Change `geometry: continuous` to test continuous point clouds while preserving
 controlled overlap. `overlap_values` applies to `scenario: support`;
 `weight_change_values` applies to `scenario: weights`.
 
-`utils.py` handles configuration, provenance and tables. `data.py` handles data
-generation. Neither implements a CPU transport backend.
+`utils.py` handles configuration, provenance and tables; `data.py` generates
+the measures. `ot_reference.py` is the untimed LP evaluator, separate from the
+production GPU methods.
 
 Notebook: `notebooks/simulation_colab.ipynb`. Full timing conventions and
 failure handling: [README_GPU.md](../../README_GPU.md).

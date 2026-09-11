@@ -294,7 +294,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=Path, default=ROOT / "experiments/simulation/configs/smoke.yaml")
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--reference-epsilon", type=float, default=1e-2)
+    parser.add_argument("--reference-epsilon", type=float, default=1e-3)
     parser.add_argument("--reference-tolerance", type=float, default=1e-9)
     parser.add_argument("--reference-max-iter", type=int, default=50_000)
     parser.add_argument("--max-entries", type=int, default=1_048_576)

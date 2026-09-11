@@ -1,0 +1,2 @@
+# Run from the repository root. On Colab this uses the installed torch if compatible.
+-e .[gpu]

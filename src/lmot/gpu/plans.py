@@ -8,8 +8,7 @@ from dataclasses import dataclass, field
 import math
 import torch
 
-from ..common import check_dense_size
-from .common import Fibers, group_sum, make_fibers, quantile_blocks
+from .common import Fibers, group_sum, make_fibers, quantile_blocks, check_dense_size
 
 
 @dataclass

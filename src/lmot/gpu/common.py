@@ -8,7 +8,14 @@ from dataclasses import dataclass
 import math
 import torch
 
-from ..common import check_dense_size
+
+class SizeLimitError(ValueError):
+    """A dense operation exceeds the configured allocation budget."""
+
+
+def check_dense_size(n, m, max_entries):
+    if max_entries is not None and n * m > max_entries:
+        raise SizeLimitError(f"dense shape ({n},{m}) exceeds {max_entries} entries")
 
 
 def resolve_device(device="cuda"):

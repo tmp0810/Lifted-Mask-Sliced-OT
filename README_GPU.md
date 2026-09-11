@@ -1,24 +1,15 @@
-# GPU update: LMOT, EST and Sinkhorn
+# CUDA backend: LMOT, EST and Sinkhorn
 
-Extract the contents of `LMOT_GPU_update.zip` into the existing repository root.
-The ZIP contains only the files listed below, with their repository-relative
-paths. Replace `pyproject.toml`; add the other files. Existing CPU modules remain
-available for comparison. The old `experiments.simulation.run` and
-`experiments.simulation.paper_results` commands still select the CPU versions.
+The transport implementations live in `src/lmot/gpu/`. Both `from lmot import
+...` and `from lmot.gpu import ...` expose these same PyTorch solvers with CUDA
+as the default device. The legacy NumPy solvers and CPU experiment runners
+have been removed. Explicit `device="cpu"` runs the same torch implementation
+for correctness tests; there is no automatic fallback.
 
-| File | Role |
-|---|---|
-| `pyproject.toml` | Add optional dependency group `gpu` for PyTorch |
-| `requirements-gpu.txt` | Optional equivalent of `pip install -e ".[gpu]"` |
-| `src/lmot/gpu/__init__.py` | GPU public API |
-| `src/lmot/gpu/common.py` | Exact binary overlap search, projection, sorting, fibers, quantile OT |
-| `src/lmot/gpu/plans.py` | Masked/product lifting, implicit actions and dense plan export |
-| `src/lmot/gpu/methods.py` | LMOT, EST and Sinkhorn on torch tensors |
-| `src/lmot/gpu/metrics.py` | Plan RMSE, identity, marginals and collision statistics |
-| `experiments/simulation/run_gpu.py` | Shared GPU experiment runner; defaults to implicit mode |
-| `experiments/simulation/paper_results_gpu.py` | Dense-plan runtime and RMSE entry point |
-| `tests/test_gpu.py` | Independent dense reference tests; CPU and CUDA when available |
-| `README_GPU.md` | Setup, measurement definitions and validation limits |
+Shared direction generation remains in `src/lmot/projections.py`. Dataset
+creation and configuration/CSV utilities live under `experiments/simulation/`.
+The small NumPy oracle under `tests/` is an independent mathematical reference,
+not a selectable production backend.
 
 ## Colab: installation and correctness check
 
@@ -40,19 +31,21 @@ print(torch.__version__, torch.cuda.get_device_name(0))
 CPU-only test run must not be taken as a completed CUDA validation. The default
 experiment device is `cuda`; it never silently falls back to CPU.
 
-The dependency extra accepts an existing compatible CUDA build of PyTorch in
-Colab; it does not force a CPU wheel or pin an accelerator-specific wheel URL.
+PyTorch is now a required dependency, so `pip install -e .` is sufficient.
+The existing `.[gpu]` extra and `requirements-gpu.txt` remain installation
+aliases. An installed compatible CUDA build in Colab is reused; no CPU wheel
+or accelerator-specific download URL is forced.
 
 ## Main output: full GPU plan, runtime, RMSE and identity
 
 ```python
-!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/smoke.yaml --device cuda --reference-epsilon 0.01
+!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/smoke.yaml --device cuda --reference-epsilon 0.001
 ```
 
 After the correctness check and smoke run, the existing larger config also works:
 
 ```python
-!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda --reference-epsilon 0.01
+!python -m experiments.simulation.paper_results_gpu --config experiments/simulation/configs/pilot.yaml --device cuda --reference-epsilon 0.001
 ```
 
 Use the same projection bank for LMOT and EST, including identical prefixes for
@@ -91,9 +84,7 @@ runtime_ms = 1000 * (time.perf_counter() - t0)
 Sinkhorn already returns a dense plan, so its matrix is used directly without a
 redundant copy. Its ground-cost matrix is constructed inside its timed solve.
 LMOT and EST export dense plans by streaming slices and row tiles; no L*n*m
-stack is allocated. The GPU export uses direct entry evaluation, unlike the
-older CPU export through identity-basis applications, so this is not a claim
-about the hardware-only speedup of identical instructions.
+stack is allocated. The GPU export uses direct entry evaluation.
 
 Excluded from all methods' timing: input generation, host-to-device transfer,
 projection-bank generation/transfer, the independent reference solve, RMSE,
@@ -112,7 +103,7 @@ not total GPU reserved memory, total device utilization or process RSS.
 
 Plan error is exactly `sqrt(mean((P - P_gt)**2))` on the probability coupling,
 with no row normalization. `P_gt` is an independently converged Sinkhorn plan
-at `--reference-epsilon` (default 0.01), checked against both marginals. It is an
+at `--reference-epsilon` (default 0.001), checked against both marginals. It is an
 entropic reference, not an exact unregularized OT plan or an identity coupling.
 The reference default budget is 50,000 iterations with marginal L1 tolerance
 1e-9. Baseline budgets and epsilons still come from the YAML config. GPU support
@@ -164,8 +155,8 @@ cost = lm.squared_cost             # scalar torch tensor on CUDA
 T = lm.barycentric_map             # torch tensor on CUDA
 ```
 
-The old `from lmot import ...` API remains the NumPy/CPU backend. All three GPU
-solvers use `float64`, strictly positive weights summing to one, and distinct
+Both public import paths select the GPU backend. All three solvers use
+`float64`, strictly positive weights summing to one, and distinct
 atoms within each measure. Merge duplicate atoms and sum weights before solving.
 Do not first round coordinates to float32 if exact equality must be preserved.
 This implementation is for forward computation and benchmarking; it does not
@@ -197,21 +188,23 @@ fallback rules as the CPU implementation. Their scalar control decisions can
 synchronize CUDA, while arrays and arithmetic remain on the device. CUDA
 parallel reductions may differ from NumPy in the last floating-point bits.
 
-## Validation delivered with this update
+## Validation
 
-Validated locally using PyTorch 2.6.0+cpu and the installed POT backend:
+Cleanup validation used PyTorch 2.6.0+cpu:
 
-- Full repository suite: 22 tests passed (13 existing tests plus 9 new tests).
-- Nine test methods passed, including 12 data settings x 4 directions x 2 lifted
+- 12 of the 13 tests passed (9 backend tests and 3 simulation tests).
+  The POT/Sinkhorn test was blocked by a bus error when importing the installed
+  POT native extension `ot.bsp.bsp_wrap`; it remains enabled for Colab validation.
+- The backend tests include 12 data settings x 4 directions x 2 lifted
   methods against an independent NumPy dense oracle; block mass, full plan,
   apply, cost, barycentric map and marginals were checked.
 - Exact overlap tests include tied leading coordinates, signed zero and distinct
   atoms separated by 1e-14. Other cases cover permuted identity, full collapse,
   unequal support sizes, no overlap, singleton fibers, anchored near-tie chains,
-  small residual mass and coordinates offset by 1e8.
-- Both POT's torch backend and the independent `torch_log` backend were checked
-  against an analytic two-atom entropic plan. Nonconvergence and allocation caps
-  are explicit. Runner tests check synchronization ordering, CSV output,
+  small residual mass and coordinates offset by 1e8. Public API routing to
+  the CUDA-default backend is checked explicitly.
+- The suite includes an analytic two-atom entropic check for POT and `torch_log`.
+  The runner checks that passed use `torch_log` and cover synchronization ordering, CSV output,
   reference failure handling and implicit operation above the dense cap.
 - The original smoke config completed through the torch runner in explicit CPU
   mode: 36 pair/method rows and six converged references at epsilon=0.01.

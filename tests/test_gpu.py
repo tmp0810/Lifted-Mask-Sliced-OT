@@ -26,7 +26,7 @@ from tests.reference_lmot import dense_reference
 from experiments.simulation.data import make_pair
 
 
-@unittest.skipIf(torch is None, "install the gpu extra to test the torch backend")
+@unittest.skipIf(torch is None, "install the project dependencies to test the torch backend")
 class TestTorchBackend(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -132,14 +132,14 @@ class TestTorchBackend(unittest.TestCase):
 
     def test_anchored_tolerance_and_small_residual(self):
         from lmot.gpu.common import tensor, make_fibers
-        from lmot.common import make_fibers as cpu_fibers
         from lmot.gpu import solve_lmot
         x = np.column_stack((np.array([0., .75, 1.5, 2.1, 3.]) * 1e-12, np.arange(5.)))
         a, theta = np.ones(5)/5, np.array([1., 0.])
-        expected = cpu_fibers(x, a, theta)
+        # Anchors 0, 1.5e-12 and 3e-12 give these exact groups.
+        expected_groups = np.array([0, 0, 1, 1, 2])
         for device in self.devices:
             f = make_fibers(tensor(x, device), tensor(a, device), tensor(theta, device))
-            np.testing.assert_array_equal(f.groups.cpu(), expected.groups)
+            np.testing.assert_array_equal(f.groups.cpu(), expected_groups)
             xx = np.array([[1e8, 1e8], [1e8, 1e8 + 1], [1e8, 1e8 + 3]])
             aa = np.array([.2, .3, .5])
             bb = aa + np.array([1e-10, -1e-10, 0])
@@ -170,7 +170,7 @@ class TestTorchBackend(unittest.TestCase):
 
     def test_validation_and_limits(self):
         from lmot.gpu import solve_lmot, solve_sinkhorn, resolve_device
-        from lmot.common import SizeLimitError
+        from lmot.gpu.common import SizeLimitError
         args, _ = make_pair(4, 2, value=.5, seed=0)
         for device in self.devices:
             result = solve_lmot(*args, projections=[[1., 0.]], device=device)
@@ -229,6 +229,17 @@ class TestTorchBackend(unittest.TestCase):
                 failed = [r for r in rows if r['reference_status']!='ok']
                 self.assertTrue(failed)
                 self.assertTrue(all(not r['plan_rmse'] for r in failed))
+
+    def test_public_api_selects_gpu_backend(self):
+        import lmot
+        import lmot.gpu
+        for name in ("solve_lmot", "solve_est", "solve_sinkhorn"):
+            self.assertIs(getattr(lmot, name), getattr(lmot.gpu, name))
+        args, _ = make_pair(4, 2, value=.5, seed=0)
+        # Default public calls must require CUDA; never silently use NumPy/CPU.
+        if not torch.cuda.is_available():
+            with self.assertRaises(RuntimeError):
+                lmot.solve_lmot(*args, projections=[[1., 0.]])
 
 
 if __name__ == "__main__":

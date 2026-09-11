@@ -7,10 +7,11 @@ name = "lmot-research"
 version = "0.1.0"
 description = "Lifted Mask Optimal Transport: methods and reproducible experiments"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24", "scipy>=1.10", "PyYAML>=6", "matplotlib>=3.7", "threadpoolctl>=3", "POT>=0.9.5,<0.10"]
+dependencies = ["numpy>=1.24", "scipy>=1.10", "PyYAML>=6", "matplotlib>=3.7", "threadpoolctl>=3", "POT>=0.9.5,<0.10", "torch>=2.2,<3"]
 
 [project.optional-dependencies]
-gpu = ["torch>=2.2,<3"]
+# Backward-compatible alias for existing `pip install -e ".[gpu]"` commands.
+gpu = []
 
 
 [tool.setuptools.packages.find]

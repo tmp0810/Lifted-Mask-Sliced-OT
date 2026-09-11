@@ -33,7 +33,7 @@ from lmot.gpu.metrics import (plan_rmse, overlap_statistics, collision_statistic
 from lmot.gpu.plans import DensePlan
 from lmot.projections import make_projections
 from .data import make_pair
-from .run import ROOT, metadata, save_table, validate_config
+from .utils import ROOT, metadata, save_table, validate_config
 
 
 GROUP_COLUMNS = ("scenario", "geometry", "n", "m", "d", "weights", "sweep_value",
@@ -113,7 +113,7 @@ def timed_prediction(solver, *, device, output_mode, max_entries, batch_size, me
 
 @torch.no_grad()
 def run(config_path, output_dir=None, *, device="cuda", output_mode="implicit",
-        reference_epsilon=1e-2, reference_tolerance=1e-9, reference_max_iter=50_000,
+        reference_epsilon=1e-3, reference_tolerance=1e-9, reference_max_iter=50_000,
         max_entries=1_048_576, batch_size=128, repeats=None, warmups=None,
         sinkhorn_backend=None):
     device = resolve_device(device)  # Fail before producing mislabeled CPU results.
@@ -293,7 +293,7 @@ def main(argv=None, *, default_mode="implicit"):
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--output-mode", choices=("dense", "implicit"), default=default_mode)
-    parser.add_argument("--reference-epsilon", type=float, default=1e-2)
+    parser.add_argument("--reference-epsilon", type=float, default=1e-3)
     parser.add_argument("--reference-tolerance", type=float, default=1e-9)
     parser.add_argument("--reference-max-iter", type=int, default=50_000)
     parser.add_argument("--sinkhorn-backend", choices=("pot", "torch_log"))
